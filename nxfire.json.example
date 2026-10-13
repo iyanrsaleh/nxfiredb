@@ -1,0 +1,11 @@
+{
+  "project": "my-app-default-rtdb",
+  "region":  "asia-southeast1",
+  "api_key": "AIzaSy...",
+  "secret":  "",
+  "token":   "",
+  "port":    9026,
+  "cache_ttl": 0,
+  "offline_queue": true,
+  "base_url": ""
+}

@@ -1,0 +1,8 @@
+{
+  "name": "nxfire-sdk",
+  "version": "0.1.0",
+  "os": "Windows",
+  "compiler": "MSVC",
+  "shared": "OFF",
+  "backend": "Firebase Realtime Database (REST)"
+}

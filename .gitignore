@@ -1,0 +1,28 @@
+build/
+build-*/
+dist/
+*.dll
+*.lib
+*.so
+*.a
+*.ilk
+*.pdb
+*.obj
+*.exe
+__pycache__/
+tests/.tmp/
+
+# Konfigurasi pengguna (berisi API key/secret) — jangan di-commit.
+nxfire.json
+
+# Klien
+clients/go/example/go.mod
+clients/go/example/go.sum
+clients/go/**/*.exe
+clients/java/out/
+clients/java/**/*.class
+clients/csharp/**/bin/
+clients/csharp/**/obj/
+
+# Dokumen perencanaan internal - tidak dipublikasikan
+RENCANA.md
