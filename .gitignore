@@ -26,3 +26,6 @@ clients/csharp/**/obj/
 
 # Dokumen perencanaan internal - tidak dipublikasikan
 RENCANA.md
+
+# Token akses lokal (hash) - jangan di-commit.
+*.tokens.json

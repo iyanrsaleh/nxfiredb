@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
-add_executable(nxfire-cli main.cpp)
+add_executable(nxfire-cli main.cpp ../../server/tokens.cpp)
+target_include_directories(nxfire-cli PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../server)
 set_target_properties(nxfire-cli PROPERTIES OUTPUT_NAME "nxfire")
 target_link_libraries(nxfire-cli PRIVATE nxfire)
 target_compile_definitions(nxfire-cli PRIVATE NXFIRE_VERSION="${PROJECT_VERSION}")

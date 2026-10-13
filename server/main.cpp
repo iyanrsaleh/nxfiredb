@@ -6,6 +6,7 @@
 
 #include "conn.h"
 #include "ws.h"
+#include "tokens.h"
 
 #include <algorithm>
 #include <atomic>
@@ -58,7 +59,25 @@ uint64_t g_maxBody    = 64ull * 1024ull * 1024ull;
 std::atomic<uint64_t> g_requests{0};
 std::atomic<uint64_t> g_ok{0};
 std::atomic<uint64_t> g_errors{0};
+std::atomic<uint64_t> g_authRejected{0};
 long long g_startedAt = 0;
+
+// Token akses. Kosong di file = auth TIDAK aktif (mode terbuka).
+// Nama file token mengikuti nama berkas konfigurasi:
+//   nxfire.json -> nxfire.tokens.json
+//   nxfire.a.json -> nxfire.a.tokens.json
+// sehingga server dengan config berbeda punya token sendiri.
+std::string tokenFileName(const std::string& configPath) {
+    size_t p = configPath.find_last_of("/\\");
+    std::string dir = (p == std::string::npos) ? std::string() : configPath.substr(0, p + 1);
+    std::string name = (p == std::string::npos) ? configPath : configPath.substr(p + 1);
+    size_t dot = name.find_last_of('.');
+    std::string base = (dot == std::string::npos) ? name : name.substr(0, dot);
+    return dir + base + ".tokens.json";
+}
+nxfiretokens::TokenStore* g_tokens = nullptr;
+std::mutex                g_tokensMu;
+std::string               g_ownerToken;   // token admin pertama, dicetak sekali
 int       g_wsPollMs  = 1000;   // jeda polling Firebase untuk langganan WS
 bool      g_offlineOn = true;   // antrian offline aktif?
 
@@ -153,6 +172,124 @@ int          g_retryMs   = 2000;
 // --------------------------------------------------------------------------
 // Utilitas
 // --------------------------------------------------------------------------
+
+// Ambil token dari header "Authorization: Bearer nxf_..." atau "?token=".
+std::string extractToken(const std::string& head, const std::string& path) {
+    std::string lower = head;
+    for (char& c : lower) c = (char)std::tolower((unsigned char)c);
+    size_t p = lower.find("authorization:");
+    if (p != std::string::npos) {
+        size_t vStart = p + 14;
+        while (vStart < head.size() && (head[vStart] == ' ' || head[vStart] == '\t')) ++vStart;
+        size_t vEnd = head.find("\r\n", vStart);
+        if (vEnd == std::string::npos) vEnd = head.size();
+        std::string val = head.substr(vStart, vEnd - vStart);
+        // Bungkus "Bearer <token>".
+        size_t sp = val.find(' ');
+        if (sp != std::string::npos) {
+            std::string scheme = val.substr(0, sp);
+            for (char& c : scheme) c = (char)std::tolower((unsigned char)c);
+            if (scheme == "bearer") val = val.substr(sp + 1);
+            else val = "";
+        }
+        while (!val.empty() && (val.back() == ' ' || val.back() == '\t')) val.pop_back();
+        if (!val.empty()) return val;
+    }
+    size_t q = path.find("?token=");
+    if (q != std::string::npos) {
+        std::string val = path.substr(q + 7);
+        size_t amp = val.find('&');
+        if (amp != std::string::npos) val.resize(amp);
+        return val;
+    }
+    return "";
+}
+
+// Kelola token (op token_*). Hanya role admin.
+Json tokenCommand(const Json& req) {
+    Json out = Json::object();
+    const std::string sub = req.at("op").asString();   // token_create/rotate/delete/list
+
+    std::lock_guard<std::mutex> lk(g_tokensMu);
+    nxfiretokens::TokenStore& store = *g_tokens;
+
+    if (sub == "token_list") {
+        Json arr = Json::array();
+        for (const auto& t : store.list()) {
+            Json o = Json::object();
+            o.set("user", Json(t.user));
+            o.set("role", Json(t.role));
+            o.set("created_at", Json((int64_t)t.createdAt));
+            arr.push_back(o);
+        }
+        out.set("ok", Json(true));
+        out.set("data", arr);
+        return out;
+    }
+
+    const std::string user = req.at("user").asString();
+    if (user.empty()) {
+        out.set("ok", Json(false));
+        out.set("error", Json("bad_request"));
+        out.set("hint", Json("field 'user' wajib diisi"));
+        return out;
+    }
+
+    if (sub == "token_create") {
+        const std::string role = req.at("role").asString();
+        std::string token = store.create(user, role);
+        if (token.empty()) {
+            out.set("ok", Json(false));
+            out.set("error", Json("already_exists"));
+            out.set("hint", Json("user '" + user + "' sudah punya token; pakai token_rotate"));
+            return out;
+        }
+        store.save();
+        Json data = Json::object();
+        data.set("user", Json(user));
+        data.set("token", Json(token));   // ditampilkan SEKALI
+        data.set("hint", Json("simpan token ini; tidak akan ditampilkan lagi"));
+        out.set("ok", Json(true));
+        out.set("data", data);
+        return out;
+    }
+
+    if (sub == "token_rotate") {
+        std::string token = store.rotate(user);
+        if (token.empty()) {
+            out.set("ok", Json(false));
+            out.set("error", Json("not_found"));
+            out.set("hint", Json("user '" + user + "' tidak punya token"));
+            return out;
+        }
+        store.save();
+        Json data = Json::object();
+        data.set("user", Json(user));
+        data.set("token", Json(token));   // ditampilkan SEKALI
+        data.set("hint", Json("token lama tidak sah; simpan token baru ini"));
+        out.set("ok", Json(true));
+        out.set("data", data);
+        return out;
+    }
+
+    if (sub == "token_delete") {
+        if (!store.remove(user)) {
+            out.set("ok", Json(false));
+            out.set("error", Json("not_found"));
+            out.set("hint", Json("user '" + user + "' tidak punya token"));
+            return out;
+        }
+        store.save();
+        out.set("ok", Json(true));
+        out.set("data", Json(true));
+        return out;
+    }
+
+    out.set("ok", Json(false));
+    out.set("error", Json("unknown_op"));
+    out.set("hint", Json("op token tidak dikenal: " + sub));
+    return out;
+}
 
 // Jalankan satu perintah lokal terhadap Firebase; hasil sebagai Json.
 Json dispatch(Nxfire& db, const Json& req) {
@@ -388,6 +525,27 @@ void handleConnection(Conn* conn) {
     if (method == "POST" && (path == "/" || path == "/query")) {
         g_requests.fetch_add(1);
 
+        // ---- Autentikasi (bila token aktif) ----
+        std::string authUser, authRole;
+        {
+            std::lock_guard<std::mutex> lk(g_tokensMu);
+            const bool authOn = g_tokens && !g_tokens->empty();
+            if (authOn) {
+                const std::string given = extractToken(head, path);
+                if (given.empty() || !g_tokens->authenticate(given, authUser, authRole)) {
+                    g_authRejected.fetch_add(1);
+                    Json out = Json::object();
+                    out.set("ok", Json(false));
+                    out.set("error", Json("unauthorized"));
+                    out.set("hint", Json("kirim header 'Authorization: Bearer nxf_...' dengan token sah"));
+                    sendJson(conn, 401, "Unauthorized", out);
+                    return;
+                }
+            } else {
+                authRole = "admin";   // tanpa token: mode terbuka
+            }
+        }
+
         std::string perr;
         Json req = Json::parse(body, &perr);
         if (!perr.empty()) {
@@ -412,6 +570,26 @@ void handleConnection(Conn* conn) {
         }
 
         const std::string op = req.at("op").asString();
+
+        // ---- Kelola token: hanya admin ----
+        if (op.rfind("token_", 0) == 0) {
+            if (authRole != "admin") {
+                g_authRejected.fetch_add(1);
+                Json out = Json::object();
+                out.set("ok", Json(false));
+                out.set("error", Json("forbidden"));
+                out.set("hint", Json("hanya token admin boleh mengelola token"));
+                sendJson(conn, 403, "Forbidden", out);
+                return;
+            }
+            Json res = tokenCommand(req);
+            if (res.at("ok").asBool()) g_ok.fetch_add(1); else g_errors.fetch_add(1);
+            sendResponse(conn, res.at("ok").asBool() ? 200 : 400,
+                         res.at("ok").asBool() ? "OK" : "Bad Request",
+                         "application/json", res.dump());
+            return;
+        }
+
         const int  ttl     = db.cacheTtl();
         const bool isGet   = (op == "get" || op == "select");
         const bool isWrite = (op == "set"    || op == "put"    || op == "upsert" ||
@@ -586,12 +764,16 @@ int main(int argc, char** argv) {
         g_offlineOn = db.offlineQueue();
     }
 
-    // Berkas antrian offline (di samping berkas konfigurasi).
+    // Berkas antrian offline + toko token (di samping berkas konfigurasi).
     {
         size_t p = g_configPath.find_last_of("/\\");
         std::string dir = (p == std::string::npos) ? std::string() : g_configPath.substr(0, p + 1);
         g_queueFile = dir + "nxfire.queue.json";
         g_queue.load(g_queueFile);
+
+        static nxfiretokens::TokenStore store(tokenFileName(g_configPath));
+        g_tokens = &store;
+        g_ownerToken = store.empty() ? std::string() : std::string("active");
     }
 
 #ifdef _WIN32
@@ -635,6 +817,11 @@ int main(int argc, char** argv) {
     std::printf("Firebase: %s\n", g_firebaseUrl.c_str());
     std::printf("Config  : %s\n", g_configPath.c_str());
     std::printf("Antrian offline: %s\n", g_offlineOn ? "ON" : "OFF");
+    if (!g_ownerToken.empty()) {
+        std::printf("Auth: AKTIF - kirim 'Authorization: Bearer nxf_...'\n");
+    } else {
+        std::printf("Auth: tidak aktif (mode terbuka). Aktifkan: nxfire token init\n");
+    }
     std::printf("POST /  |  POST /query  |  GET /health  |  GET /ws (realtime)\n");
     std::fflush(stdout);
 

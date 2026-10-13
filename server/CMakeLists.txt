@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-add_executable(nxfire-server main.cpp conn.cpp ws.cpp)
+add_executable(nxfire-server main.cpp conn.cpp ws.cpp tokens.cpp)
 target_link_libraries(nxfire-server PRIVATE nxfire)
 
 if(WIN32)

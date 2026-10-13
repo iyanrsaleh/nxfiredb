@@ -172,6 +172,21 @@ nxfire-watch /chat --port 9026
 - **Antrian offline** — tulis yang gagal karena Firebase tak terjangkau disimpan
   ke `nxfire.queue.json` dan dikirim ulang otomatis.
 - **Realtime WebSocket** — subscribe per path (lihat di atas).
+- **Token akses** — sejak token pertama dibuat, semua perintah wajib
+  `Authorization: Bearer nxf_...`:
+
+  ```jsonc
+  // kelola token (admin saja)
+  { "op": "token_create", "user": "budi", "role": "user" }
+  { "op": "token_rotate", "user": "budi" }   // perbarui; token lama mati
+  { "op": "token_delete", "user": "budi" }
+  { "op": "token_list" }
+  ```
+
+  Token disimpan sebagai **hash SHA-256** di `nxfire.tokens.json`; teks asli
+  hanya tampil sekali saat dibuat/dirotasi. Role `admin` boleh semua operasi
+  termasuk kelola token; role `user` hanya operasi data. Server **tanpa**
+  file token berjalan terbuka (kompatibel perilaku lama).
 
 ## Struktur
 

@@ -12,6 +12,7 @@
 
 #include <nxfire/Nxfire.h>
 #include <nxfire/Theme.h>
+#include "../server/tokens.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -486,6 +487,107 @@ int cmdConfig() {
 }
 
 // --------------------------------------------------------------------------
+// Kelola token akses (nxfire token ...)
+// --------------------------------------------------------------------------
+std::string tokenStorePath() {
+    size_t p = g_config.find_last_of("/\\");
+    std::string dir = (p == std::string::npos) ? std::string() : g_config.substr(0, p + 1);
+    std::string name = (p == std::string::npos) ? g_config : g_config.substr(p + 1);
+    size_t dot = name.find_last_of('.');
+    std::string base = (dot == std::string::npos) ? name : name.substr(0, dot);
+    return dir + base + ".tokens.json";
+}
+
+int cmdToken(const std::string& sub, const std::string& arg) {
+    nxfiretokens::TokenStore store(tokenStorePath());
+
+    if (sub == "init") {
+        std::string tok = store.ensureOwner();
+        if (tok.empty()) {
+            std::printf("Auth is already enabled (%s).\n", tokenStorePath().c_str());
+            return 1;
+        }
+        if (!store.save()) {
+            std::printf("Cannot write '%s'\n", tokenStorePath().c_str());
+            return 1;
+        }
+        std::printf("%sAuth enabled.%s Admin token (save it! shown only once):\n",
+                    T::c(T::GREEN).c_str(), T::c(T::RESET).c_str());
+        std::printf("  %s\n", tok.c_str());
+        std::printf("Usage: -H \"Authorization: Bearer <token>\"\n");
+        std::printf("Restart the server to apply.\n");
+        return 0;
+    }
+
+    if (sub == "create") {
+        if (arg.empty()) { std::printf("Usage: nxfire token create <user> [admin|user]\n"); return 2; }
+        std::string role = "user";
+        // arg bisa "<user> admin" - pakai arg kedua bila ada.
+        std::string user = arg;
+        size_t sp = arg.find(' ');
+        if (sp != std::string::npos) {
+            user = arg.substr(0, sp);
+            std::string r = arg.substr(sp + 1);
+            if (r == "admin") role = "admin";
+        }
+        std::string tok = store.create(user, role);
+        if (tok.empty()) {
+            std::printf("User '%s' already has a token (use: nxfire token rotate %s)\n",
+                        user.c_str(), user.c_str());
+            return 1;
+        }
+        store.save();
+        std::printf("Token for %s%s (%s shown only once):\n", user.c_str(),
+                    (role == "admin" ? " [admin]" : ""), "save it");
+        std::printf("  %s\n", tok.c_str());
+        std::printf("Restart the server to apply.\n");
+        return 0;
+    }
+
+    if (sub == "rotate") {
+        if (arg.empty()) { std::printf("Usage: nxfire token rotate <user>\n"); return 2; }
+        std::string tok = store.rotate(arg);
+        if (tok.empty()) { std::printf("No token for user '%s'\n", arg.c_str()); return 1; }
+        store.save();
+        std::printf("New token for %s (old one is now invalid, save it!):\n", arg.c_str());
+        std::printf("  %s\n", tok.c_str());
+        std::printf("Restart the server to apply.\n");
+        return 0;
+    }
+
+    if (sub == "delete") {
+        if (arg.empty()) { std::printf("Usage: nxfire token delete <user>\n"); return 2; }
+        if (!store.remove(arg)) { std::printf("No token for user '%s'\n", arg.c_str()); return 1; }
+        store.save();
+        std::printf("%sToken for %s deleted.%s Restart the server to apply.\n",
+                    T::c(T::GREEN).c_str(), arg.c_str(), T::c(T::RESET).c_str());
+        return 0;
+    }
+
+    if (sub == "list" || sub.empty()) {
+        auto all = store.list();
+        if (all.empty()) {
+            std::printf("Auth is OFF (no token file). Enable: nxfire token init\n");
+            return 0;
+        }
+        std::printf("%-20s %-6s %s\n", "USER", "ROLE", "CREATED");
+        for (const auto& t : all) {
+            char buf[32];
+            std::time_t tt = (std::time_t)t.createdAt;
+            std::tm* tmv = std::localtime(&tt);
+            if (tmv) std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", tmv);
+            else buf[0] = 0;
+            std::printf("%-20s %-6s %s\n", t.user.c_str(), t.role.c_str(), buf);
+        }
+        return 0;
+    }
+
+    std::printf("Unknown token subcommand: '%s'\n", sub.c_str());
+    std::printf("Usage: nxfire token init|create|rotate|delete|list\n");
+    return 2;
+}
+
+// --------------------------------------------------------------------------
 // Menu interaktif
 // --------------------------------------------------------------------------
 int menu() {
@@ -588,6 +690,8 @@ int main(int argc, char** argv) {
     if (cmd == "stop")      return cmdStop();
     if (cmd == "status")    return cmdStatus();
     if (cmd == "autostart") return cmdAutostart(argc > 2 ? argv[2] : "");
+    if (cmd == "token")     return cmdToken(argc > 2 ? argv[2] : "",
+                                            argc > 3 ? argv[3] : "");
     if (cmd == "server")    return cmdServer();
     if (cmd == "config")    return cmdConfig();
     if (cmd == "-h" || cmd == "--help") {
@@ -599,6 +703,7 @@ int main(int argc, char** argv) {
             "  nxfire stop         stop the running server\n"
             "  nxfire status       show whether the server is running\n"
             "  nxfire autostart    show/toggle auto-start (nxfire autostart on|off)\n"
+            "  nxfire token        manage access tokens: init|create|rotate|delete|list\n"
             "  nxfire test         test the Firebase connection\n"
             "  nxfire info         API info (for developers)\n"
             "  nxfire setup        create/edit nxfire.json\n"
