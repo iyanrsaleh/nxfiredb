@@ -15,7 +15,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace T = nxfire::theme;
 
@@ -38,6 +41,13 @@ const char* GRAY    = T::GRAY;
 const char* WHITE   = T::WHITE;
 
 bool gColor = false;
+
+std::string trim(const std::string& s) {
+    size_t a = s.find_first_not_of(" \t\r\n");
+    if (a == std::string::npos) return "";
+    size_t b = s.find_last_not_of(" \t\r\n");
+    return s.substr(a, b - a + 1);
+}
 
 std::string C(const char* code) { return T::on() ? std::string(code) : std::string(); }
 std::string C(const char* code, const std::string& s) {
@@ -211,8 +221,14 @@ void printUsage() {
         "            (aliases: insert, select, delete)\n"
         "Options: --config FILE        (default nxfire.json)\n"
         "         --port N             send to the local server\n"
+        "         --token TOKEN        access token for the local server\n"
+        "         --token-file FILE    read the token from a file (first line)\n"
         "         --color auto|always|never\n"
-        "         --plain              same as --color never\n");
+        "         --plain              same as --color never\n\n"
+        "Token can also come from the NXFIRE_TOKEN environment variable.\n"
+        "Example:\n"
+        "  nxfire-client '{\"op\":\"get\",\"path\":\"/users\"}' --port 9026 \\\n"
+        "    --token nxf_0123456789abcdef0123456789abcdef\n");
 }
 
 } // namespace
@@ -221,6 +237,8 @@ int main(int argc, char** argv) {
     std::string opJson;
     std::string config = "nxfire.json";
     std::string host = "127.0.0.1";
+    std::string token;                 // "Bearer nxf_..." (mode server)
+    std::string tokenFile;             // baca token dari file
     int port = 0;
     int colorMode = 0; // 0=auto, 1=always, 2=never
 
@@ -234,6 +252,8 @@ int main(int argc, char** argv) {
         else if (a == "--config") config = next("--config");
         else if (a == "--host")   host = next("--host");
         else if (a == "--port")   port = std::stoi(next("--port"));
+        else if (a == "--token")  token = next("--token");
+        else if (a == "--token-file") tokenFile = next("--token-file");
         else if (a == "--plain" || a == "--no-color") colorMode = 2;
         else if (a == "--color") {
             std::string v = next("--color");
@@ -244,6 +264,17 @@ int main(int argc, char** argv) {
     }
 
     if (opJson.empty()) { printUsage(); return 2; }
+
+    // Token: --token menang; --token-file membaca file berisi token saja;
+    // fallback: NXFIRE_TOKEN dari lingkungan.
+    if (token.empty() && !tokenFile.empty()) {
+        std::ifstream in(tokenFile, std::ios::binary);
+        if (in) { std::getline(in, token); token = trim(token); }
+    }
+    if (token.empty()) {
+        const char* envTok = std::getenv("NXFIRE_TOKEN");
+        if (envTok) token = envTok;
+    }
 
     gColor = (colorMode == 1) || (colorMode == 0 && T::stdoutIsTty() && !T::envNoColor());
     T::set(gColor);
@@ -262,7 +293,9 @@ int main(int argc, char** argv) {
     if (port > 0) {
         const std::string pHost = host + ":" + std::to_string(port);
         const std::string url = "http://" + pHost + "/";
-        http::Response res = http::request("POST", url, opJson);
+        std::vector<std::pair<std::string, std::string>> headers;
+        if (!token.empty()) headers.push_back({"Authorization", "Bearer " + token});
+        http::Response res = http::request("POST", url, opJson, headers);
         if (!res.error.empty()) {
             std::string j = "{\"ok\":false,\"error\":\"network_error\",\"hint\":\"" + res.error + "\"}";
             render(j, op, target, pHost, false, -1);

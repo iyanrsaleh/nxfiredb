@@ -78,6 +78,40 @@ try {
     r = run(['{bukan json}', '--config', CFG]);
     let j2 = null; try { j2 = JSON.parse(r.stdout.trim()); } catch {}
     check('input salah: JSON error rapi', j2 && j2.ok === false && j2.error === 'bad_request', r.stdout);
+
+    // 6) --token dikirim sebagai header Authorization Bearer ke server lokal.
+    //    Gunakan server sungguhan dengan auth aktif (port 9091) + mock Firebase.
+    const TOKSRV_PORT = 9091;
+    const TOKCFG = path.join(TMP, 'nxfire.theme.tok.json');
+    const TOKFILE = path.join(TMP, 'nxfire.theme.tok.tokens.json');
+    fs.writeFileSync(TOKCFG, JSON.stringify({ project: 'mock', base_url: `http://127.0.0.1:${MOCK_PORT}`, port: TOKSRV_PORT }));
+    fs.rmSync(TOKFILE, { force: true });
+    const NXFIRE = path.join(root, 'build', 'tools', 'nxfire', 'Release', exe('nxfire'));
+    const init = spawnSync(NXFIRE, ['token', 'init', '--config', TOKCFG], { encoding: 'utf8' });
+    const adminTok = (init.stdout.match(/nxf_[0-9a-f]{32}/) || [])[0];
+    const server = spawn(path.join(root, 'build', 'server', 'Release', exe('nxfire-server')), ['--config', TOKCFG], { stdio: 'ignore' });
+    try {
+        let up = false;
+        for (let i = 0; i < 60 && !up; ++i) {
+            try { up = (await fetch(`http://127.0.0.1:${TOKSRV_PORT}/health`)).ok; } catch {}
+            await new Promise((r2) => setTimeout(r2, 100));
+        }
+        check('server uji token menyala', up, '');
+        r = run(['{"op":"get","path":"/seed"}', '--config', CFG, '--port', String(TOKSRV_PORT)]);
+        check('client tanpa token -> 401', /unauthorized/.test(r.stdout), r.stdout.slice(0, 120));
+        r = run(['{"op":"get","path":"/seed"}', '--config', CFG, '--port', String(TOKSRV_PORT), '--token', adminTok]);
+        check('client --token -> ok', /"ok":true/.test(r.stdout), r.stdout.slice(0, 120));
+        fs.writeFileSync(path.join(TMP, 'tok.txt'), adminTok, 'utf8');
+        r = run(['{"op":"get","path":"/seed"}', '--config', CFG, '--port', String(TOKSRV_PORT),
+                 '--token-file', path.join(TMP, 'tok.txt')]);
+        check('client --token-file -> ok', /"ok":true/.test(r.stdout), r.stdout.slice(0, 120));
+        const renv = { ...process.env, NXFIRE_TOKEN: adminTok };
+        r = spawnSync(CLIENT, ['{"op":"get","path":"/seed"}', '--config', CFG, '--port', String(TOKSRV_PORT)],
+                      { encoding: 'utf8', env: renv });
+        check('client NXFIRE_TOKEN env -> ok', /"ok":true/.test(r.stdout), r.stdout.slice(0, 120));
+    } finally {
+        server.kill();
+    }
 } finally {
     mock.kill();
 }

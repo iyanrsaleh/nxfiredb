@@ -188,6 +188,14 @@ nxfire-watch /chat --port 9026
   termasuk kelola token; role `user` hanya operasi data. Server **tanpa**
   file token berjalan terbuka (kompatibel perilaku lama).
 
+  `nxfire-client` (mode server) ikut mengirim token:
+
+  ```
+  nxfire-client '{"op":"get","path":"/users"}' --port 9026 --token nxf_...
+  nxfire-client '{"op":"get","path":"/users"}' --port 9026 --token-file tok.txt
+  # atau lewat lingkungan: set NXFIRE_TOKEN=nxf_...
+  ```
+
 ## Struktur
 
 ```
