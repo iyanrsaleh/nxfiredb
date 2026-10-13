@@ -2,7 +2,7 @@
 # Paketkan hasil build menjadi folder + arsip rilis (tanpa source).
 set -e
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-VER=0.1.0
+VER=0.2.0
 
 case "$(uname -s)" in
     Linux*)  OS=linux-$(uname -m) ;;

@@ -2,7 +2,7 @@
 REM Paketkan hasil build menjadi folder + arsip rilis (tanpa source).
 setlocal
 set ROOT=%~dp0..
-set VER=0.1.0
+set VER=0.2.0
 set OS=windows-x64
 set OUT=%ROOT%\dist\nxfire-sdk-%VER%-%OS%
 set STAGE=%ROOT%\dist\nxfire-sdk-%VER%
