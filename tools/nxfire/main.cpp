@@ -624,17 +624,32 @@ int menuToken() {
         std::printf("  Store: %s\n", tokenStorePath().c_str());
         std::printf("%s---------------------------------------------------%s\n",
                     T::c(T::GRAY).c_str(), T::c(T::RESET).c_str());
-        auto opt = [](const char* n, const char* text) {
-            std::printf("  %s%s%s. %s\n", T::c(T::CYAN).c_str(), n, T::c(T::RESET).c_str(), text);
+        auto opt = [](const char* n, const char* text, const char* hint = "") {
+            std::printf("  %s%s%s. %-34s %s%s%s\n",
+                        T::c(T::CYAN).c_str(), n, T::c(T::RESET).c_str(), text,
+                        T::c(T::GRAY).c_str(), hint, T::c(T::RESET).c_str());
         };
-        opt("1", "List tokens");
-        opt("2", "Enable auth (create admin token)");
-        opt("3", "Create token for a user");
-        opt("4", "Rotate a user's token");
-        opt("5", "Delete a user's token");
+        opt("1", "List tokens", "show all users + roles");
+        if (!authOn) {
+            opt("2", "Enable auth", "create the first admin token");
+        } else {
+            std::printf("  %s2. %-34s %s\n",
+                        T::c(T::GRAY).c_str(), "Enable auth (already ON)",
+                        T::c(T::RESET).c_str());
+        }
+        opt("3", "Create token for a user", "e.g. budi, or budi admin");
+        opt("4", "Rotate a user's token", "invalidate old, issue new");
+        opt("5", "Delete a user's token", "revoke access");
         opt("0", "Back to main menu");
         std::printf("%s---------------------------------------------------%s\n",
                     T::c(T::GRAY).c_str(), T::c(T::RESET).c_str());
+        if (!authOn) {
+            std::printf("  %sTip: pick 2 first to turn on authentication, then add users with 3.%s\n",
+                        T::c(T::GRAY).c_str(), T::c(T::RESET).c_str());
+        } else {
+            std::printf("  %sTip: tokens are shown only ONCE - save them. Restart the server to apply.%s\n",
+                        T::c(T::GRAY).c_str(), T::c(T::RESET).c_str());
+        }
         std::printf("  %s%sChoose:%s ", T::c(T::ORANGE).c_str(),
                     T::c(T::WHITE).c_str(), T::c(T::RESET).c_str());
 
@@ -646,7 +661,11 @@ int menuToken() {
         if (line == "0" || line == "q") return 0;
         else if (line == "1") cmdToken("list", "");
         else if (line == "2") {
-            std::printf("  Enable auth now? (y/n): ");
+            if (authOn) {
+                std::printf("  Auth is already ON (%s).\n", tokenStorePath().c_str());
+                continue;
+            }
+            std::printf("  Enable auth now? This creates the first admin token. (y/n): ");
             std::string ans;
             std::getline(std::cin, ans);
             if (!ans.empty() && (ans[0] == 'y' || ans[0] == 'Y')) cmdToken("init", "");
@@ -721,7 +740,7 @@ int menu() {
         opt("7", "Run server (foreground, debug)");
         opt("8", "API info (for developers)");
         opt("9", "Show config");
-        opt("t", "Tokens (manage access tokens)");
+        opt("10", "Tokens (manage access tokens)");
         opt("0", "Exit");
         std::printf("%s---------------------------------------------------%s\n",
                     T::c(T::GRAY).c_str(), T::c(T::RESET).c_str());
@@ -753,7 +772,7 @@ int menu() {
         else if (line == "7") cmdServer();
         else if (line == "8") cmdInfo();
         else if (line == "9") cmdConfig();
-        else if (line == "t" || line == "T") menuToken();
+        else if (line == "10" || line == "t" || line == "T") menuToken();
         else if (line == "0" || line == "q") break;
 
         if (line != "7") {
