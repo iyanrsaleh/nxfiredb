@@ -188,6 +188,9 @@ bool disableAutoStart() {
 // --------------------------------------------------------------------------
 // Perintah
 // --------------------------------------------------------------------------
+std::string tokenStorePath();
+int menuToken();
+
 int cmdTest() {
     Nxfire db;
     if (!db.open(g_config)) {
@@ -212,18 +215,41 @@ int cmdTest() {
 int cmdInfo() {
     Nxfire db;
     bool ok = db.open(g_config);
+    int port = ok ? db.port() : 9026;
+
+    nxfiretokens::TokenStore store(tokenStorePath());
+    bool authOn = !store.empty();
+
     std::printf("\nNxfireDB API (for developers)\n");
     std::printf("===================================================\n");
     std::printf("Firebase : %s\n", ok ? db.firebaseUrl().c_str() : "(config not ready)");
-    std::printf("Port     : %d\n", ok ? db.port() : 9026);
+    std::printf("Port     : %d\n", port);
     std::printf("Config   : %s\n", g_config.c_str());
+    std::printf("Auth     : %s\n",
+                authOn ? T::c(T::GREEN, "ON (send a valid token)").c_str()
+                       : T::c(T::YELLOW, "OFF (open). Enable: nxfire token init").c_str());
     std::printf("\nLocal endpoint:\n");
-    std::printf("  POST http://127.0.0.1:%d/       send JSON command\n", ok ? db.port() : 9026);
-    std::printf("  GET  http://127.0.0.1:%d/health server status\n\n", ok ? db.port() : 9026);
+    std::printf("  POST http://127.0.0.1:%d/       send JSON command\n", port);
+    std::printf("  GET  http://127.0.0.1:%d/health server status\n\n", port);
+    std::printf("Authentication (when Auth is ON):\n");
+    std::printf("  Header   : Authorization: Bearer nxf_...\n");
+    std::printf("  Query    : ?token=nxf_...  (appended to the path)\n");
+    std::printf("  Note     : GET /health needs no token\n\n");
     std::printf("Example (curl):\n");
-    std::printf("  curl -X POST http://127.0.0.1:%d/ -H \"Content-Type: application/json\" \\\n", ok ? db.port() : 9026);
-    std::printf("       -d \"{\\\"op\\\":\\\"set\\\",\\\"path\\\":\\\"/users/budi\\\",\\\"value\\\":{\\\"name\\\":\\\"Budi\\\"}}\"\n\n");
-    std::printf("Operations: set, get, update, push, remove\n\n");
+    if (authOn) {
+        std::printf("  curl -X POST http://127.0.0.1:%d/ \\\n", port);
+        std::printf("       -H \"Content-Type: application/json\" \\\n");
+        std::printf("       -H \"Authorization: Bearer nxf_...\" \\\n");
+        std::printf("       -d \"{\\\"op\\\":\\\"set\\\",\\\"path\\\":\\\"/users/budi\\\",\\\"value\\\":{\\\"name\\\":\\\"Budi\\\"}}\"\n\n");
+    } else {
+        std::printf("  curl -X POST http://127.0.0.1:%d/ -H \"Content-Type: application/json\" \\\n", port);
+        std::printf("       -d \"{\\\"op\\\":\\\"set\\\",\\\"path\\\":\\\"/users/budi\\\",\\\"value\\\":{\\\"name\\\":\\\"Budi\\\"}}\"\n\n");
+    }
+    std::printf("Operations: set, get, update, push, remove\n");
+    std::printf("Token ops : token_list, token_create, token_rotate, token_delete (admin only)\n\n");
+    if (authOn) {
+        std::printf("Manage tokens: nxfire token init|create|rotate|delete|list\n\n");
+    }
     return 0;
 }
 
@@ -587,6 +613,78 @@ int cmdToken(const std::string& sub, const std::string& arg) {
     return 2;
 }
 
+int menuToken() {
+    for (;;) {
+        nxfiretokens::TokenStore store(tokenStorePath());
+        const bool authOn = !store.empty();
+        std::printf("\n%sAccess tokens%s  (auth: %s)\n",
+                    T::c(T::WHITE).c_str(), T::c(T::RESET).c_str(),
+                    authOn ? T::c(T::GREEN, "ON").c_str()
+                           : T::c(T::YELLOW, "OFF").c_str());
+        std::printf("  Store: %s\n", tokenStorePath().c_str());
+        std::printf("%s---------------------------------------------------%s\n",
+                    T::c(T::GRAY).c_str(), T::c(T::RESET).c_str());
+        auto opt = [](const char* n, const char* text) {
+            std::printf("  %s%s%s. %s\n", T::c(T::CYAN).c_str(), n, T::c(T::RESET).c_str(), text);
+        };
+        opt("1", "List tokens");
+        opt("2", "Enable auth (create admin token)");
+        opt("3", "Create token for a user");
+        opt("4", "Rotate a user's token");
+        opt("5", "Delete a user's token");
+        opt("0", "Back to main menu");
+        std::printf("%s---------------------------------------------------%s\n",
+                    T::c(T::GRAY).c_str(), T::c(T::RESET).c_str());
+        std::printf("  %s%sChoose:%s ", T::c(T::ORANGE).c_str(),
+                    T::c(T::WHITE).c_str(), T::c(T::RESET).c_str());
+
+        std::string line;
+        if (!std::getline(std::cin, line)) return 0;
+        line = trim(line);
+        if (line.empty()) continue;
+
+        if (line == "0" || line == "q") return 0;
+        else if (line == "1") cmdToken("list", "");
+        else if (line == "2") {
+            std::printf("  Enable auth now? (y/n): ");
+            std::string ans;
+            std::getline(std::cin, ans);
+            if (!ans.empty() && (ans[0] == 'y' || ans[0] == 'Y')) cmdToken("init", "");
+        }
+        else if (line == "3") {
+            std::printf("  user name: ");
+            std::string user;
+            std::getline(std::cin, user);
+            user = trim(user);
+            if (user.empty()) { std::printf("  (cancelled)\n"); continue; }
+            std::printf("  role [user|admin] (Enter = user): ");
+            std::string role;
+            std::getline(std::cin, role);
+            role = trim(role);
+            cmdToken("create", user + (role.empty() ? "" : " " + role));
+        }
+        else if (line == "4") {
+            std::printf("  user name: ");
+            std::string user;
+            std::getline(std::cin, user);
+            user = trim(user);
+            if (user.empty()) { std::printf("  (cancelled)\n"); continue; }
+            cmdToken("rotate", user);
+        }
+        else if (line == "5") {
+            std::printf("  user name: ");
+            std::string user;
+            std::getline(std::cin, user);
+            user = trim(user);
+            if (user.empty()) { std::printf("  (cancelled)\n"); continue; }
+            std::printf("  Delete token for '%s'? (y/n): ", user.c_str());
+            std::string ans;
+            std::getline(std::cin, ans);
+            if (!ans.empty() && (ans[0] == 'y' || ans[0] == 'Y')) cmdToken("delete", user);
+        }
+    }
+}
+
 // --------------------------------------------------------------------------
 // Menu interaktif
 // --------------------------------------------------------------------------
@@ -623,6 +721,7 @@ int menu() {
         opt("7", "Run server (foreground, debug)");
         opt("8", "API info (for developers)");
         opt("9", "Show config");
+        opt("t", "Tokens (manage access tokens)");
         opt("0", "Exit");
         std::printf("%s---------------------------------------------------%s\n",
                     T::c(T::GRAY).c_str(), T::c(T::RESET).c_str());
@@ -654,6 +753,7 @@ int menu() {
         else if (line == "7") cmdServer();
         else if (line == "8") cmdInfo();
         else if (line == "9") cmdConfig();
+        else if (line == "t" || line == "T") menuToken();
         else if (line == "0" || line == "q") break;
 
         if (line != "7") {
@@ -704,6 +804,7 @@ int main(int argc, char** argv) {
             "  nxfire status       show whether the server is running\n"
             "  nxfire autostart    show/toggle auto-start (nxfire autostart on|off)\n"
             "  nxfire token        manage access tokens: init|create|rotate|delete|list\n"
+            "                      (or press 't' in the menu)\n"
             "  nxfire test         test the Firebase connection\n"
             "  nxfire info         API info (for developers)\n"
             "  nxfire setup        create/edit nxfire.json\n"

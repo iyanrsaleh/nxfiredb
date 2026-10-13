@@ -1,6 +1,6 @@
 {
   "name": "create-nxfire-app",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Memasang NxfireDB ke sistem (server + client + menu)",
   "keywords": [
     "nxfiredb",
